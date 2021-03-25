@@ -509,6 +509,8 @@ _OPTIONS_TEXT = """
                  where the output of ``cat filelist`` is a one-per-line list of
                  files, cloud URLs, and wildcards of files and cloud URLs.
 
+  -k            If set, bypasses KMS verification when attempting to parallelize large file uploads.
+
   -j <ext,...>   Applies gzip transport encoding to any file upload whose
                  extension matches the ``-j`` extension list. This is useful when
                  uploading files with compressible content such as .js, .css,
@@ -1195,6 +1197,8 @@ class CpCommand(Command):
     test_callback_file = None
     dest_storage_class = None
 
+    bypass_kms_check = False
+
     # self.recursion_requested initialized in command.py (so can be checked
     # in parent class for all commands).
     self.manifest = None
@@ -1217,6 +1221,8 @@ class CpCommand(Command):
           test_callback_file = a
         elif o == '-I':
           read_args_from_stdin = True
+        elif o == '-k':
+          bypass_kms_check = True
         elif o == '-j':
           gzip_encoded = True
           gzip_arg_exts = [x.strip() for x in a.split(',')]
@@ -1287,4 +1293,5 @@ class CpCommand(Command):
         canned_acl=canned_acl,
         skip_unsupported_objects=self.skip_unsupported_objects,
         test_callback_file=test_callback_file,
-        dest_storage_class=dest_storage_class)
+        dest_storage_class=dest_storage_class,
+        bypass_kms_check=bypass_kms_check)

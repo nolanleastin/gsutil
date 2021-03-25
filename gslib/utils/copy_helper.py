@@ -393,6 +393,7 @@ CopyHelperOpts = namedtuple('CopyHelperOpts', [
     'skip_unsupported_objects',
     'test_callback_file',
     'dest_storage_class',
+    'bypass_kms_check',
 ])
 
 
@@ -407,7 +408,8 @@ def CreateCopyHelperOpts(perform_mv=False,
                          canned_acl=None,
                          skip_unsupported_objects=False,
                          test_callback_file=None,
-                         dest_storage_class=None):
+                         dest_storage_class=None,
+                         bypass_kms_check=False):
   """Creates CopyHelperOpts for passing options to CopyHelper."""
   # We create a tuple with union of options needed by CopyHelper and any
   # copy-related functionality in CpCommand, RsyncCommand, or Command class.
@@ -423,7 +425,8 @@ def CreateCopyHelperOpts(perform_mv=False,
       canned_acl=canned_acl,
       skip_unsupported_objects=skip_unsupported_objects,
       test_callback_file=test_callback_file,
-      dest_storage_class=dest_storage_class)
+      dest_storage_class=dest_storage_class,
+      bypass_kms_check=bypass_kms_check)
   return global_copy_helper_opts
 
 
@@ -1294,7 +1297,8 @@ def _ShouldDoParallelCompositeUpload(logger,
                                      file_size,
                                      gsutil_api,
                                      canned_acl=None,
-                                     kms_keyname=None):
+                                     kms_keyname=None,
+                                     bypass_kms_check=False):
   """Determines whether parallel composite upload strategy should be used.
 
   Args:
@@ -1308,6 +1312,7 @@ def _ShouldDoParallelCompositeUpload(logger,
         parallel composite uploads.
     canned_acl: Canned ACL to apply to destination object, if any.
     kms_keyname: Cloud KMS key name to encrypt destination, if any.
+    bypass_kms_check: If true, ignores kms_keyname and doesn't check default bucket KMS key.
 
   Returns:
     True iff a parallel upload should be performed on the source file.
@@ -1330,7 +1335,8 @@ def _ShouldDoParallelCompositeUpload(logger,
   # TODO: Once compiled crcmod is being distributed by major Linux distributions
   # remove this check.
   if (all_factors_but_size and parallel_composite_upload_threshold == 0 and
-      file_size >= PARALLEL_COMPOSITE_SUGGESTION_THRESHOLD) and not kms_keyname:
+      file_size >= PARALLEL_COMPOSITE_SUGGESTION_THRESHOLD) and (
+          not kms_keyname or bypass_kms_check):
     with suggested_sliced_transfers_lock:
       if not suggested_sliced_transfers.get('suggested'):
         logger.info('\n'.join(
@@ -1349,8 +1355,14 @@ def _ShouldDoParallelCompositeUpload(logger,
                 'composite objects.')) + '\n')
         suggested_sliced_transfers['suggested'] = True
 
-  if not (all_factors_but_size and parallel_composite_upload_threshold > 0 and
-          file_size >= parallel_composite_upload_threshold):
+  all_factors_with_size = (all_factors_but_size and
+                           parallel_composite_upload_threshold > 0 and
+                           file_size >= parallel_composite_upload_threshold)
+  # TODO(KMS, Compose): bypass_kms_check enables us to soft-launch support for kms composition.
+  # Remove this behavior once fully launched.
+  if bypass_kms_check:
+    return all_factors_with_size
+  if not all_factors_with_size:
     return False
 
   # TODO(KMS, Compose): Until we ensure service-side that we have efficient
@@ -2170,7 +2182,8 @@ def _UploadFileToObject(src_url,
       src_obj_size,
       gsutil_api,
       canned_acl=global_copy_helper_opts.canned_acl,
-      kms_keyname=dst_obj_metadata.kmsKeyName)
+      kms_keyname=dst_obj_metadata.kmsKeyName,
+      bypass_kms_check=global_copy_helper_opts.bypass_kms_check)
   non_resumable_upload = (
       (0 if upload_size is None else upload_size) < ResumableThreshold() or
       src_url.IsStream() or src_url.IsFifo())
